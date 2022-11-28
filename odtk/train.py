@@ -19,7 +19,7 @@ def train(model, state, path, annotations, val_path, val_annotations, resize, ma
           val_iterations, lr, warmup, milestones, gamma, rank=0, world=1, mixed_precision=True, with_apex=False,
           use_dali=True, verbose=True, metrics_url=None, logdir=None, rotate_augment=False, augment_brightness=0.0,
           augment_contrast=0.0, augment_hue=0.0, augment_saturation=0.0, regularization_l2=0.0001, rotated_bbox=False,
-          absolute_angle=False):
+          absolute_angle=False, score_threshold=0.3):
     'Train the model on the given dataset'
 
     # Prepare model
@@ -185,7 +185,7 @@ def train(model, state, path, annotations, val_path, val_annotations, resize, ma
             if val_annotations and (iteration == iterations or iteration % val_iterations == 0):
                 stats = infer(model, val_path, None, resize, max_size, batch_size, annotations=val_annotations,
                             mixed_precision=mixed_precision, is_master=is_master, world=world, use_dali=use_dali,
-                            with_apex=with_apex, is_validation=True, verbose=False, rotated_bbox=rotated_bbox)
+                            with_apex=with_apex, is_validation=True, verbose=False, rotated_bbox=rotated_bbox, score_threshold=score_threshold)
                 model.train()
                 if is_master and logdir is not None and stats is not None:
                     writer.add_scalar(

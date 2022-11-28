@@ -16,7 +16,7 @@ from .utils import Profiler, rotate_box
 
 
 def infer(model, path, detections_file, resize, max_size, batch_size, mixed_precision=True, is_master=True, world=0,
-          annotations=None, with_apex=False, use_dali=True, is_validation=False, verbose=True, rotated_bbox=False):
+          annotations=None, with_apex=False, use_dali=True, is_validation=False, verbose=True, rotated_bbox=False, score_threshold=0.3):
     'Run inference on images from path'
 
     DDP = DistributedDataParallel if not with_apex else ADDP
@@ -114,7 +114,7 @@ def infer(model, path, detections_file, resize, max_size, batch_size, mixed_prec
                 continue
             processed_ids.add(image_id)
 
-            keep = (scores > 0).nonzero(as_tuple=False)
+            keep = (scores > score_threshold).nonzero(as_tuple=False)
             scores = scores[keep].view(-1)
             if rotated_bbox:
                 boxes = boxes[keep, :].view(-1, 6)

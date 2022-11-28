@@ -7,7 +7,7 @@ import torch.cuda
 import torch.distributed
 import torch.multiprocessing
 
-from odtk import infer, train, utils
+from odtk import infer, train, utils, video_infer
 from odtk.model import Model
 from odtk._C import Engine
 
@@ -77,6 +77,7 @@ def parse(args):
                               help='anchor/bbox overlap threshold', default=[0.4, 0.5])
     parser_train.add_argument('--absolute-angle', help='regress absolute angle (rather than -45 to 45 degrees.',
                               action='store_true')
+    parser_train.add_argument('--score-thr', help='score threshold for validation', type=float, default=0.3)
 
     parser_infer = subparsers.add_parser('infer', help='run inference')
     parser_infer.add_argument('model', type=str, help='path to model')
@@ -93,6 +94,7 @@ def parse(args):
     parser_infer.add_argument('--full-precision', help='inference in full precision', action='store_true')
     parser_infer.add_argument('--rotated-bbox', help='inference using a rotated bounding box model',
                               action='store_true')
+    parser_infer.add_argument('--score-thr', help='score threshold for inference', type=float, default=0.3)
 
     parser_export = subparsers.add_parser('export', help='export a model into a TensorRT engine')
     parser_export.add_argument('model', type=str, help='path to model')
@@ -114,6 +116,27 @@ def parse(args):
                                action='store_true')
     parser_export.add_argument('--dynamic-batch-opts', help='Profile batch sizes for tensorrt engine export (min, opt, max)',
                                metavar='value value value', type=int, nargs=3, default=[1,8,16])
+
+    parser_video = subparsers.add_parser('video', help='perform model inference on videos <.mp4>')
+    parser_video.add_argument('model', type=str, help='path to model')
+    parser_video.add_argument('--source', metavar='path', type=str, help='path to video', default='.')
+    parser_video.add_argument('--output', metavar='file', type=str, nargs='+',
+                              help='save detections to specified JSON file(s)', default=['detections.json'])
+    parser_video.add_argument('--batch', metavar='size', type=int, help='batch size', default=2 * devcount)
+    parser_video.add_argument('--resize', metavar='scale', type=int, help='resize to given size', default=800)
+    parser_video.add_argument('--max-size', metavar='max', type=int, help='maximum resizing size', default=1333)
+    parser_video.add_argument('--with-apex', help='use NVIDIA APEX AMP and DDP', action='store_true')
+    parser_video.add_argument('--with-dali', help='use dali for data loading', action='store_true')
+    parser_video.add_argument('--full-precision', help='inference in full precision', action='store_true')
+    parser_video.add_argument('--rotated-bbox', help='inference using a rotated bounding box model',
+                              action='store_true')
+    parser_video.add_argument('--freq', help='frame capture frequency', type=int, default=5)
+    parser_video.add_argument('--score-thr', help='score threshold for inference', type=float, default=0.3)
+    parser_video.add_argument('--nms-thr', help='nms threshold for inference', type=float, default=0.1)
+    parser_video.add_argument('--iou-thr', help='iou threshold for inference', type=float, default=0.7)
+    parser_video.add_argument('--show-box', help='choose if show bounding box in videos', action='store_true')
+    parser_video.add_argument('--show-track', help='choose if show tracklets in videos', action='store_true')
+    parser_video.add_argument('--save-details', help='choose if save tracklet details as csv', action='store_true')
 
     return parser.parse_args(args)
 
@@ -142,7 +165,7 @@ def load_model(args, verbose=False):
         model.freeze_unused_params()
         if verbose: print(model)
 
-    elif args.command == 'infer' and ext in ['.engine', '.plan']:
+    elif (args.command == 'infer' or args.command == 'video') and ext in ['.engine', '.plan']:
         model = None
 
     else:
@@ -182,7 +205,7 @@ def worker(rank, args, world, model, state):
                     metrics_url=args.post_metrics, logdir=args.logdir, verbose=(rank == 0),
                     rotate_augment=args.augment_rotate, augment_brightness=args.augment_brightness,
                     augment_contrast=args.augment_contrast, augment_hue=args.augment_hue, augment_saturation=args.augment_saturation,
-                    regularization_l2=args.regularization_l2, rotated_bbox=args.rotated_bbox, absolute_angle=args.absolute_angle)
+                    regularization_l2=args.regularization_l2, rotated_bbox=args.rotated_bbox, absolute_angle=args.absolute_angle, score_threshold=args.score_thr)
 
     elif args.command == 'infer':
         if model is None:
@@ -192,7 +215,19 @@ def worker(rank, args, world, model, state):
         infer.infer(model, args.images, args.output, args.resize, args.max_size, args.batch,
                     annotations=args.annotations, mixed_precision=not args.full_precision,
                     is_master=(rank == 0), world=world, with_apex=args.with_apex, use_dali=args.with_dali,
-                    verbose=(rank == 0), rotated_bbox=args.rotated_bbox)
+                    verbose=(rank == 0), rotated_bbox=args.rotated_bbox, score_threshold=args.score_thr)
+
+    elif args.command == 'video':
+        if model is None:
+            if rank == 0: print('Loading CUDA engine from {}...'.format(os.path.basename(args.model)))
+            model = Engine.load(args.model)
+
+        video_infer.video_infer(model, args.source, args.output, args.resize, args.max_size, args.batch,
+                    annotations=None, mixed_precision=not args.full_precision,
+                    is_master=(rank == 0), world=world, with_apex=args.with_apex, use_dali=args.with_dali,
+                    verbose=(rank == 0), rotated_bbox=args.rotated_bbox, freq=args.freq, score_threshold=args.score_thr,
+                    nms_threshold=args.nms_thr, iou_threshold=args.iou_thr, show_box=args.show_box, show_track=args.show_track,
+                    save_details=args.save_details)
 
     elif args.command == 'export':
         onnx_only = args.export.split('.')[-1] == 'onnx'

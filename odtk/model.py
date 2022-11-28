@@ -42,7 +42,7 @@ class Model(nn.Module):
         self.ratios = ratios
         self.scales = scales
         self.angles = angles if angles is not None else \
-                    [-np.pi / 6, 0, np.pi / 6] if self.rotated_bbox else None
+                    [-np.pi, -np.pi * 3 / 4, -np.pi / 2, -np.pi / 4, 0, np.pi / 4, np.pi / 2, np.pi * 3 / 4, np.pi] if self.rotated_bbox else None
         self.anchors = {}
         self.classes = classes
 
